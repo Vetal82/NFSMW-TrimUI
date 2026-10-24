@@ -1,0 +1,73 @@
+
+name: NFSMW Catalog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Checkout NFSMW recompilation
+        uses: actions/checkout@v4
+        with:
+          repository: codepdbh/nfsmwpc-recompiled
+          path: upstream
+
+      - name: Checkout pcrecomp
+        uses: actions/checkout@v4
+        with:
+          repository: sp00nznet/pcrecomp
+          path: pcrecomp
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --break-system-packages capstone pefile
+
+      - name: Check game input
+        env:
+          SPEED_EXE_B64: ${{ secrets.SPEED_EXE_B64 }}
+        run: |
+          if [ -z "$SPEED_EXE_B64" ]; then
+            echo "::error::Missing SPEED_EXE_B64 secret"
+            exit 1
+          fi
+          mkdir -p upstream/work
+          printf '%s' "$SPEED_EXE_B64" | base64 --decode > upstream/work/speed.analysis.exe
+          test -s upstream/work/speed.analysis.exe
+
+      - name: Create initial seeds
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          Path("upstream/work/seeds_code.json").write_text(
+              json.dumps([0x505f80])
+          )
+          PY
+
+      - name: Generate function catalog
+        env:
+          PCRECOMP: ${{ github.workspace }}/pcrecomp
+        run: |
+          cd upstream
+          python3 scripts/run_lift.py catalog \
+            work/speed.analysis.exe \
+            work/seeds_code.json \
+            work/catalog.json
+
+      - name: Upload catalog
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfsmw-function-catalog
+          path: upstream/work/catalog.json
+          retention-days: 3
